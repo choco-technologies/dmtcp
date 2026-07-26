@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container:
+      image: chocotechnologies/dmod:1.0.4
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build dmtcp
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DDMOD_MODE=DMOD_MODULE
+          cmake --build .
+
+      - name: Verify module files
+        run: |
+          echo "Checking for module files..."
+          ls -lh build/dmf/
+          test -f build/dmf/dmtcp.dmf
+          test -f build/dmf/dmtcp_version.txt
+          test -f build/dmf/test_dmtcp.dmf
+          echo "Module files present"
+
+      - name: Run tests with dmod_loader
+        run: |
+          export DMOD_DMF_DIR=$(pwd)/build/dmf
+          dmf-get install -d ${DMOD_DMF_DIR}/test_dmtcp-local.dmd -y
+          dmod_loader build/dmf/test_dmtcp.dmf

@@ -1,0 +1,5 @@
+# Include dynamically generated versions list from latest release
+$include https://github.com/choco-technologies/dmtcp/releases/download/vlatest/versions.dmm
+
+# Module entry with version placeholder - expanded by $version-available
+dmtcp https://github.com/choco-technologies/dmtcp/releases/download/v<version>/dmtcp-v<version>-<arch_name>.zip
