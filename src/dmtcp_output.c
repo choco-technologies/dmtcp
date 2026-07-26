@@ -118,7 +118,7 @@ dmod_dmtcp_api_declaration(1.0, int, _send, ( dmtcp_conn_t conn, const void* dat
     int result;
     if (conn->fin_sent)
     {
-        result = -ESHUTDOWN;
+        result = -ENETDOWN;
     }
     else if (conn->state != dmtcp_state_established && conn->state != dmtcp_state_close_wait)
     {
