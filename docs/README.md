@@ -4,6 +4,7 @@ Welcome to the dmtcp module documentation.
 
 ## Contents
 
+- **[dmtcp.md](dmtcp.md)** - Architecture and design rationale
 - **[api-reference.md](api-reference.md)** - Complete API documentation
 
 ## Quick Reference

@@ -24,7 +24,7 @@ DMOD_MODULE_VERSION=0.1
 DMOD_AUTHOR_NAME=Patryk Kubiak
 
 # The list of C sources
-DMOD_CSOURCES=src/dmtcp.c
+DMOD_CSOURCES=src/dmtcp.c src/dmtcp_registrations.c src/dmtcp_wire.c src/dmtcp_listen_table.c src/dmtcp_conn_table.c src/dmtcp_output.c src/dmtcp_input.c src/dmtcp_close.c
 
 # The list of C++ sources
 DMOD_CXXSOURCES=

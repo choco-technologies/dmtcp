@@ -62,6 +62,13 @@ set(DMOD_DIF_IMPLS          )
 dmod_add_library(${DMOD_MODULE_NAME} ${DMOD_MODULE_VERSION}
     # List of source files - can include C and C++ files
     src/dmtcp.c
+    src/dmtcp_registrations.c
+    src/dmtcp_wire.c
+    src/dmtcp_listen_table.c
+    src/dmtcp_conn_table.c
+    src/dmtcp_output.c
+    src/dmtcp_input.c
+    src/dmtcp_close.c
 )
 
 target_include_directories(${DMOD_MODULE_NAME} PRIVATE
@@ -72,9 +79,49 @@ target_include_directories(${DMOD_MODULE_NAME}_if INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-# To depend on another module's headers, use:
-#   dmod_link_modules(${DMOD_MODULE_NAME}
-#       other_module@1.0
-#   )
+# dmip:    dmip_send()/_v4_get_source_address() to transmit, dmip_checksum()
+#          for the pseudo-header checksum, dmip_v4_parse_header()/
+#          _v6_parse_header() to read the enclosing IP header,
+#          dmip_register_protocol()/_unregister_protocol() to receive (see
+#          src/dmtcp.c / src/dmtcp_input.c).
+# dmroute: header-only - dmip.h needs dmroute_addr_t (re-exported as
+#          dmip_addr_t) directly, even though dmtcp itself never calls a
+#          dmroute_* function.
+# dmnetif: header-only - dmnetif_iface_t, threaded through every handler/
+#          accessor.
+# dmlist:  backs the listen table (src/dmtcp_listen_table.c) and the
+#          connection table (src/dmtcp_conn_table.c) - NOT the per-connection
+#          send buffer, which is a plain byte stream, not a collection of
+#          discrete items (see docs/dmtcp.md).
+# dmosi:   mutexes (the listen table, the connection table, and one per TCB)
+#          and, new relative to dmudp/dmicmp, dmosi_timer_t for the
+#          retransmission timer and the TIME_WAIT timer, and
+#          dmosi_get_tick_count() for initial sequence number generation.
+#
+# Deliberately NOT linked:
+# dmicmp:     dmudp/dmicmp report "nobody's listening" via an ICMP message
+#             because neither UDP nor plain IP has its own control
+#             mechanism for that. TCP does: RFC 793's RST is dmtcp's own,
+#             self-generated reply (built and sent through plain
+#             dmip_send(), the same primitive dmicmp itself is built on)
+#             for the "SYN to a closed port" / "segment for an unknown
+#             connection" cases (see src/dmtcp_input.c's
+#             send_rst_for_unmatched()) - there is no call site in this
+#             module that needs a dmicmp_* function.
+# dm_sw_ring: considered for the per-connection send buffer; rejected
+#             because dmtcp already serializes all access to a TCB via its
+#             own per-connection mutex (making dm_sw_ring's built-in
+#             optional mutex/blocking-wait features redundant), and its
+#             head-only peek/discard API doesn't cleanly support "peek the
+#             already-sent-but-unacked prefix, discard exactly the acked
+#             amount" without an extra copy anyway (see docs/dmtcp.md).
+dmod_link_modules(${DMOD_MODULE_NAME}
+    dmip
+    dmroute
+    dmnetif
+    dmlist
+    dmosi
+)
+
 enable_testing()
 add_subdirectory(tests)

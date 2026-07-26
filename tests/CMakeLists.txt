@@ -14,6 +14,23 @@ target_include_directories(${DMOD_MODULE_NAME} PRIVATE
 
 target_link_libraries(${DMOD_MODULE_NAME} dmtcp_if)
 
+# dmip/dmnetbridge/dmarp/dmnetif/dmroute: drive dmtcp's registered
+# packet_received DIF implementation (via dmip, transitively through
+# dmnetbridge) with hand-built fixture packets, and seed fixture routes/ARP
+# entries for the send-path tests - the same set dmudp_test.c/dmicmp_test.c
+# link for the same reason (see their own tests/CMakeLists.txt comments).
+# dmosi: the test itself calls dmosi_get_tick_count() (to predict the
+#        server's ISS) and dmosi_thread_sleep() (to wait out the
+#        retransmission retry limit).
+dmod_link_modules(${DMOD_MODULE_NAME}
+    dmip
+    dmnetbridge
+    dmarp
+    dmnetif
+    dmroute
+    dmosi
+)
+
 # Register the test module with ctest - this replays the same two steps CI
 # runs (see .github/templates/ci.yml.template): install the test module's
 # dependencies with dmf-get, then execute it through dmod_loader. The test's
