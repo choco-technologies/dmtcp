@@ -27,6 +27,8 @@ struct segment_result
     const uint8_t* data;
     size_t   data_len;
     bool     has_eof;      /* fire on_data(conn, NULL, 0, ...) */
+    bool     has_writable; /* fire on_writable(conn, writable_space, ...) */
+    size_t   writable_space;
     bool     completed_close; /* LAST_ACK's FIN got acked - fire dmtcp_terminal_closed */
 };
 
@@ -48,6 +50,29 @@ static void discard_acked_prefix(struct dmtcp_conn* conn, uint32_t amount)
     }
     conn->send_buffer_len -= amount;
     conn->send_buffer_sent -= amount;
+}
+
+/**
+ * @brief Resolve the edge-triggered on_writable latch now that this ACK
+ *        has finished reclaiming outbound buffer space
+ *
+ * Fires at most once per segment, and only for a caller that actually
+ * short-wrote earlier (conn->writable_pending) - see
+ * dmtcp_writable_handler_t in dmtcp.h. Assumes conn->lock is held; the
+ * callback itself runs later, after process_segment_for_conn() unlocks.
+ */
+static void note_writable_space(struct dmtcp_conn* conn, struct segment_result* result)
+{
+    if (!conn->writable_pending)
+        return;
+
+    size_t space = DMTCP_SEND_BUFFER_LEN - conn->send_buffer_len;
+    if (space == 0)
+        return; /* the ACK freed nothing usable - stay armed for the next one */
+
+    conn->writable_pending = false;
+    result->has_writable = true;
+    result->writable_space = space;
 }
 
 /**
@@ -117,6 +142,7 @@ static void apply_ack(struct dmtcp_conn* conn, const dmtcp_header_t* hdr, struct
     }
 
     dmtcp_flush_send_buffer(conn);
+    note_writable_space(conn, result);
 
     if (conn->fin_acked && conn->state != dmtcp_state_fin_wait_2 && conn->state != dmtcp_state_time_wait)
     {
@@ -271,6 +297,13 @@ static void process_segment_for_conn(struct dmtcp_conn* conn, const dmtcp_header
     if (result.has_eof && callbacks.on_data != NULL)
     {
         callbacks.on_data(conn, NULL, 0, user_data);
+    }
+    /* After on_data, so a request/response protocol gets to see the
+     * inbound bytes before being told it may write again - and before the
+     * teardown below, which would free the TCB out from under the handler. */
+    if (result.has_writable && callbacks.on_writable != NULL)
+    {
+        callbacks.on_writable(conn, result.writable_space, user_data);
     }
     if (result.completed_close)
     {

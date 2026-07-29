@@ -46,6 +46,9 @@
  * plumbing indirectly) - see retransmit_limit_exceeded_fires_on_error(). */
 #define TEST_EXPECTED_RTO_MS 1000u
 #define TEST_EXPECTED_MAX_RETRANSMITS 5u
+/* Mirrors src/dmtcp_internal.h's DMTCP_SEND_BUFFER_LEN, for the same
+ * reason as the two constants above - see send_space_reports_free_room(). */
+#define TEST_EXPECTED_SEND_BUFFER_LEN 4096u
 
 static dmip_addr_t make_v4(uint8_t a, uint8_t b, uint8_t c, uint8_t d)
 {
@@ -647,6 +650,115 @@ DMOD_TEST_STEP(dmtcp_send_partial_write_when_buffer_full)
 
     dmtcp_abort(conn);
     dmtcp_unlisten(TEST_FIXED_PORT_BASE + 22);
+}
+
+/* ---- Send-side backpressure: dmtcp_send_space() / on_writable ---- */
+
+static bool   g_writable_called;
+static size_t g_writable_space;
+
+static void recording_writable_handler(dmtcp_conn_t conn, size_t space, void* user_data)
+{
+    (void)conn; (void)user_data;
+    g_writable_called = true;
+    g_writable_space = space;
+}
+
+/**
+ * @brief Fill conn's outbound buffer until dmtcp_send() short-writes,
+ *        which is what arms the edge-triggered on_writable latch
+ */
+static void fill_send_buffer(dmtcp_conn_t conn)
+{
+    static uint8_t big_payload[8192];
+    while (dmtcp_send(conn, big_payload, sizeof(big_payload)) > 0)
+    {
+    }
+}
+
+/**
+ * @brief Feed an ACK from the fixture peer acknowledging `acked` bytes of
+ *        payload past the server's SYN
+ */
+static void feed_data_ack(dmip_addr_t client, dmip_addr_t server, uint16_t client_port, uint16_t server_port,
+                           uint32_t client_seq, uint32_t server_iss, uint32_t acked)
+{
+    uint8_t ack[DMTCP_HEADER_LEN];
+    size_t ack_len = build_v4_segment(ack, client, server, client_port, server_port,
+                                       client_seq, server_iss + 1u + acked, DMTCP_FLAG_ACK, NULL, 0);
+    feed_tcp_packet(g_iface, dmip_family_v4, client, server, ack, ack_len);
+}
+
+DMOD_TEST_STEP(send_space_reports_free_room)
+{
+    DMOD_TEST_EXPECT_EQ(dmtcp_send_space(NULL), -EINVAL);
+
+    dmip_addr_t client = make_v4(10, 21, 3, 1);
+    dmip_addr_t server = make_v4(10, 21, 3, 2);
+    dmtcp_conn_t conn = establish_passive_connection(TEST_FIXED_PORT_BASE + 23, client, 6005, server, 3300, NULL);
+    DMOD_TEST_EXPECT_NOT_NULL(conn);
+
+    DMOD_TEST_EXPECT_EQ(dmtcp_send_space(conn), (int)TEST_EXPECTED_SEND_BUFFER_LEN);
+
+    fill_send_buffer(conn);
+    DMOD_TEST_EXPECT_EQ(dmtcp_send_space(conn), 0);
+
+    dmtcp_abort(conn);
+    dmtcp_unlisten(TEST_FIXED_PORT_BASE + 23);
+}
+
+DMOD_TEST_STEP(on_writable_fires_after_ack_frees_buffer_space)
+{
+    dmip_addr_t client = make_v4(10, 21, 4, 1);
+    dmip_addr_t server = make_v4(10, 21, 4, 2);
+    uint32_t server_iss = 0;
+    dmtcp_conn_t conn = establish_passive_connection(TEST_FIXED_PORT_BASE + 24, client, 6006, server, 3400, &server_iss);
+    DMOD_TEST_EXPECT_NOT_NULL(conn);
+
+    g_writable_called = false;
+    g_writable_space = 0;
+    dmtcp_conn_callbacks_t callbacks = { .on_writable = recording_writable_handler };
+    DMOD_TEST_EXPECT_EQ(dmtcp_conn_set_callbacks(conn, &callbacks, NULL), 0);
+
+    fill_send_buffer(conn);
+    DMOD_TEST_EXPECT_FALSE(g_writable_called); /* armed, but no ACK has arrived yet */
+
+    feed_data_ack(client, server, 6006, TEST_FIXED_PORT_BASE + 24, 3401, server_iss, 1000);
+
+    DMOD_TEST_EXPECT_TRUE(g_writable_called);
+    DMOD_TEST_EXPECT_EQ(g_writable_space, (size_t)1000);
+    DMOD_TEST_EXPECT_EQ(dmtcp_send_space(conn), 1000);
+
+    dmtcp_abort(conn);
+    dmtcp_unlisten(TEST_FIXED_PORT_BASE + 24);
+}
+
+/**
+ * @brief The edge-trigger latch: a caller that never short-wrote must not
+ *        be woken by a space-reclaiming ACK
+ */
+DMOD_TEST_STEP(on_writable_silent_without_a_short_write)
+{
+    dmip_addr_t client = make_v4(10, 21, 5, 1);
+    dmip_addr_t server = make_v4(10, 21, 5, 2);
+    uint32_t server_iss = 0;
+    dmtcp_conn_t conn = establish_passive_connection(TEST_FIXED_PORT_BASE + 25, client, 6007, server, 3500, &server_iss);
+    DMOD_TEST_EXPECT_NOT_NULL(conn);
+
+    g_writable_called = false;
+    dmtcp_conn_callbacks_t callbacks = { .on_writable = recording_writable_handler };
+    DMOD_TEST_EXPECT_EQ(dmtcp_conn_set_callbacks(conn, &callbacks, NULL), 0);
+
+    static const uint8_t small[16] = { 0 };
+    DMOD_TEST_EXPECT_EQ(dmtcp_send(conn, small, sizeof(small)), (int)sizeof(small));
+
+    feed_data_ack(client, server, 6007, TEST_FIXED_PORT_BASE + 25, 3501, server_iss, sizeof(small));
+
+    DMOD_TEST_EXPECT_FALSE(g_writable_called);
+    DMOD_TEST_EXPECT_EQ(dmtcp_send_space(conn), (int)TEST_EXPECTED_SEND_BUFFER_LEN);
+
+    dmtcp_abort(conn);
+    dmtcp_unlisten(TEST_FIXED_PORT_BASE + 25);
 }
 
 /* ---- Graceful close ---- */
