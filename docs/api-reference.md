@@ -12,10 +12,11 @@ See [dmtcp.md](dmtcp.md) for the design rationale behind this API.
 | `dmtcp_accept_handler_t` | Callback registered via `dmtcp_listen()`/`_listen_any()`, fires once per completed incoming handshake |
 | `dmtcp_established_handler_t` | Fires once a `dmtcp_connect()`'d connection completes its handshake |
 | `dmtcp_data_handler_t` | Fires for new in-order payload, and once more (`data == NULL`) on peer FIN (EOF) |
+| `dmtcp_writable_handler_t` | Edge-triggered: fires once after an ACK frees outbound buffer space, but only if an earlier `dmtcp_send()` came up short |
 | `dmtcp_closed_handler_t` | TERMINAL - graceful close completed |
 | `dmtcp_reset_handler_t` | TERMINAL - RST (peer's or `dmtcp_abort()`'s own) |
 | `dmtcp_error_handler_t` | TERMINAL - dmtcp gave up (currently: retransmission retry limit, `-ETIMEDOUT`) |
-| `dmtcp_conn_callbacks_t` | Bundle of the five callbacks above, passed to `dmtcp_connect()`/`dmtcp_conn_set_callbacks()` |
+| `dmtcp_conn_callbacks_t` | Bundle of the six callbacks above, passed to `dmtcp_connect()`/`dmtcp_conn_set_callbacks()` |
 
 ## Constants
 
@@ -66,6 +67,7 @@ See [dmtcp.md](dmtcp.md) for the design rationale behind this API.
 | `dmtcp_conn_get_local_endpoint()` | Local address/port |
 | `dmtcp_conn_get_peer_endpoint()` | Remote peer's address/port |
 | `dmtcp_send()` | Queue bytes for delivery - byte-stream semantics, may return a partial count |
+| `dmtcp_send_space()` | Free room in the outbound buffer - the largest `dmtcp_send()` guaranteed to be taken in full |
 | `dmtcp_close()` | Graceful close (sends FIN) - idempotent |
 | `dmtcp_abort()` | Abortive close (sends RST, tears the connection down immediately) |
 

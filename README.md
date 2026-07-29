@@ -82,7 +82,7 @@ dmtcp_listen_any(on_accept, &port); /* or dmtcp_listen(7, on_accept) for a fixed
 |----------|-------------|
 | `dmtcp_listen()` / `_listen_any()` / `_unlisten()` | Reserve a port (or the first free one) and register a handler for incoming connections |
 | `dmtcp_connect()` | Actively open a connection |
-| `dmtcp_send()` / `_close()` / `_abort()` | Send data, close gracefully, or abort a connection |
+| `dmtcp_send()` / `_send_space()` / `_close()` / `_abort()` | Send data (byte-stream, may short-write), query free buffer room, close gracefully, or abort |
 | `dmtcp_conn_set_callbacks()` / `_get_state()` / `_get_local_endpoint()` / `_get_peer_endpoint()` | Per-connection accessors |
 | `dmtcp_build_header()` / `_parse_header()` / `_v4_checksum_valid()` / `_v6_checksum_valid()` | Wire-level segment build/parse/checksum |
 

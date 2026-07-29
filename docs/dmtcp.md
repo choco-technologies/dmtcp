@@ -122,6 +122,46 @@ outstanding. After `DMTCP_MAX_RETRANSMITS` consecutive retries with no
 progress, the connection is abandoned (see "Two lock contexts, one
 per-connection mutex" for why this specific teardown is special-cased).
 
+## Send-side backpressure: `on_writable`
+
+A 4 KB `DMTCP_SEND_BUFFER_LEN` means any sender of a payload bigger than
+that - a file, a firmware image, a long log stream - *will* hit a short
+`dmtcp_send()` return. Without a way to learn when the buffer drained,
+such a sender is forced into a polling loop on its own timer or thread,
+picking a tick interval that trades latency against wakeups, and doing so
+with no visibility into the one event that actually matters (an ACK).
+
+`dmtcp_writable_handler_t` closes that gap, and `dmtcp_send_space()`
+reports the current free room so a handler can size its next chunk without
+guessing.
+
+The trigger is **edge-triggered, exactly like POSIX `EPOLLOUT`**, not
+level-triggered:
+
+| Step | Where | What happens |
+|---|---|---|
+| Arm | `dmtcp_send()` (`dmtcp_output.c`) | `to_copy < data_len` sets `conn->writable_pending` |
+| Fire | `note_writable_space()` (`dmtcp_input.c`), after `apply_ack()` compacted the buffer | If armed *and* space is now > 0: disarm, record `result.writable_space` |
+| Deliver | `process_segment_for_conn()`, after `conn->lock` is released | `on_writable(conn, space, user_data)` |
+
+The latch matters: without it, every space-reclaiming ACK would call
+`on_writable` even for a caller that never came close to filling the
+buffer - noise for the request/response users (`dmell`-style command
+sessions) this module also serves. With it, a caller that never
+short-writes never hears from the callback at all, and the intended loop
+is simply "send until short, stop, resume in `on_writable`".
+
+`space` is a snapshot taken while the lock was held, not a reservation -
+another thread may consume part of it before the handler runs, so a
+`dmtcp_send()` of exactly `space` bytes can still come up short. That
+re-arms the latch, which is the correct outcome, so a handler needs no
+special case for it.
+
+Delivery order within one segment is `on_data` → `on_writable` →
+terminal callback: inbound bytes reach a protocol handler before it is
+told it may write again, and both land before any teardown that would
+free the TCB underneath them.
+
 ## Two lock contexts, one per-connection mutex
 
 Every other module in this tree (`dmip`, `dmicmp`, `dmudp`) only ever

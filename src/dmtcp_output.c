@@ -133,12 +133,32 @@ dmod_dmtcp_api_declaration(1.0, int, _send, ( dmtcp_conn_t conn, const void* dat
             memcpy(conn->send_buffer + conn->send_buffer_len, data, to_copy);
             conn->send_buffer_len += to_copy;
         }
+        /* Arm the edge-triggered on_writable latch on a short write (the
+         * zero-byte case included) - see dmtcp_writable_handler_t in
+         * dmtcp.h. Deliberately not cleared on a full write: a caller that
+         * short-wrote, then sent a small full-fitting chunk, is still
+         * waiting to hear that the buffer drained. */
+        if (to_copy < data_len)
+        {
+            conn->writable_pending = true;
+        }
         dmtcp_flush_send_buffer(conn);
         result = (int)to_copy;
     }
 
     dmosi_mutex_unlock(conn->lock);
     return result;
+}
+
+dmod_dmtcp_api_declaration(1.0, int, _send_space, ( dmtcp_conn_t conn ))
+{
+    if (conn == NULL || conn->magic != DMTCP_CONN_MAGIC)
+        return -EINVAL;
+
+    dmosi_mutex_lock(conn->lock);
+    int space = (int)(DMTCP_SEND_BUFFER_LEN - conn->send_buffer_len);
+    dmosi_mutex_unlock(conn->lock);
+    return space;
 }
 
 /* ============================================================================

@@ -365,6 +365,34 @@ typedef void (*dmtcp_established_handler_t)( dmtcp_conn_t conn, void* user_data 
 typedef void (*dmtcp_data_handler_t)( dmtcp_conn_t conn, const uint8_t* data, size_t data_len, void* user_data );
 
 /**
+ * @brief Fires when an incoming ACK frees room in a connection's outbound
+ *        buffer after a previous dmtcp_send() could not take everything
+ *        offered
+ *
+ * @par Edge-triggered, exactly like POSIX EPOLLOUT
+ * This does NOT fire on every ACK. It arms itself only when a
+ * dmtcp_send() call queues fewer bytes than it was given (a short write,
+ * including the zero-byte case) - and then fires once, the next time an
+ * ACK actually reclaims buffer space, disarming itself again. A caller
+ * that never fills the buffer never hears from it. The intended loop is
+ * therefore: keep calling dmtcp_send() until it returns short, stop, and
+ * resume from here.
+ *
+ * `space` is dmtcp_send_space()'s value at the moment the callback was
+ * armed to fire, provided so a handler doesn't have to call back in just
+ * to size its next chunk. It is a snapshot, not a reservation: it is
+ * always > 0, but nothing stops another thread from consuming some of it
+ * before this handler runs, so a dmtcp_send() of exactly `space` bytes may
+ * still come up short (and re-arm this callback, which is the correct
+ * outcome).
+ *
+ * Called inline on the thread that processed the ACK - the same delivery
+ * context as dmtcp_data_handler_t, with the same rule: dmtcp_send() may be
+ * called straight back from it.
+ */
+typedef void (*dmtcp_writable_handler_t)( dmtcp_conn_t conn, size_t space, void* user_data );
+
+/**
  * @brief TERMINAL: fires exactly once, for a graceful (non-RST) finish,
  *        immediately before the TCB is freed
  *
@@ -403,6 +431,7 @@ typedef struct
 {
     dmtcp_established_handler_t on_established;
     dmtcp_data_handler_t        on_data;
+    dmtcp_writable_handler_t    on_writable;
     dmtcp_closed_handler_t      on_closed;
     dmtcp_reset_handler_t       on_reset;
     dmtcp_error_handler_t       on_error;
@@ -507,6 +536,25 @@ dmod_dmtcp_api(1.0, int, _conn_get_peer_endpoint, ( dmtcp_conn_t conn, dmip_addr
  *         this connection - the local send side is done)
  */
 dmod_dmtcp_api(1.0, int, _send, ( dmtcp_conn_t conn, const void* data, size_t data_len ));
+
+/**
+ * @brief How many bytes dmtcp_send() could take right now
+ *
+ * The free room in `conn`'s outbound buffer - i.e. the largest `data_len`
+ * a dmtcp_send() call made immediately afterward is guaranteed to accept
+ * in full (from this thread; another thread could consume some of it
+ * first). Room is reclaimed only by an incoming ACK, so a caller that has
+ * hit 0 should stop and wait for dmtcp_writable_handler_t rather than
+ * poll this in a loop.
+ *
+ * Reports the buffer's full capacity for a connection with nothing queued,
+ * regardless of state - it describes the buffer, not whether a send would
+ * be accepted. dmtcp_send() still rejects a connection that isn't
+ * ESTABLISHED/CLOSE_WAIT, or one already closed locally.
+ *
+ * @return Free bytes (>= 0), or -EINVAL if `conn` is NULL/invalid
+ */
+dmod_dmtcp_api(1.0, int, _send_space, ( dmtcp_conn_t conn ));
 
 /**
  * @brief Gracefully close a connection (sends a FIN)

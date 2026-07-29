@@ -146,6 +146,13 @@ struct dmtcp_conn
     size_t   send_buffer_len;
     size_t   send_buffer_sent;
 
+    /* Edge-trigger latch for dmtcp_writable_handler_t: set by dmtcp_send()
+     * when it can't take everything it was offered, cleared by the ACK
+     * path that frees space and fires on_writable. Without it, on_writable
+     * would fire on every space-reclaiming ACK even for a caller that
+     * never filled the buffer - see dmtcp_writable_handler_t in dmtcp.h. */
+    bool writable_pending;
+
     dmosi_timer_t rto_timer;
     uint32_t      retransmit_count;
 
