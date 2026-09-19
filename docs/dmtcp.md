@@ -7,11 +7,11 @@ subset of the RFC 793 state machine on top of [dmip](../../dmip): the
 three-way handshake (passive and active open), reliable in-order data
 transfer with a fixed-size sliding window and a retransmission timer,
 graceful close (FIN/ACK both directions), and RST generation/handling.
-Sending calls into dmip's family-agnostic `dmip_send()`; receiving
-registers as the handler for TCP's IP protocol number
-(`dmip_register_protocol()`), the same mechanism
-[dmudp](../../dmudp)/[dmicmp](../../dmicmp) use for their own protocol
-numbers.
+Sending calls into dmip's family-agnostic `dmip_send()`; receiving claims
+TCP's IP protocol number by implementing dmip's protocol handler DIF
+(`dmip_protocol_receive()`/`_protocol_numbers()`, see `src/dmtcp_dif.c`),
+the same mechanism [dmudp](../../dmudp)/[dmicmp](../../dmicmp) use for
+their own protocol numbers.
 
 ```
 ┌──────────────────────────────────────────────┐
@@ -22,7 +22,7 @@ numbers.
 ├──────────────────────────────────────────────┤
 │                    DMIP                        │
 │   dmip_send(), dmip_checksum(), protocol       │
-│   registration                                 │
+│   handler DIF                                  │
 ├──────────────────────────────────────────────┤
 │      DMNETBRIDGE / DMROUTE / DMNETIF / DMARP  │
 └──────────────────────────────────────────────┘
@@ -198,28 +198,39 @@ with no such compromise.
 
 `dmudp`/`dmicmp` are single-file modules, so this never came up for them,
 but it's a real, sharp edge for any multi-file module: **a function whose
-address is handed to *another* module as a callback (`dmip_register_protocol()`,
-`dmosi_timer_create()`, ...) must be defined in the same `.c` file as the
-call that hands it over.** Registering `dmtcp_handle_ip_packet()` (defined
-in `dmtcp_input.c`) from a `dmip_register_protocol()` call living in
-`dmtcp.c` compiles and links without any warning, and `dmip_register_protocol()`
-itself returns 0 - but the very first time dmip actually invokes the stored
-pointer, it jumps to an unrelocated address (a small, meaningless offset)
-and the process segfaults instantly, with no code of dmtcp's own ever
-executing. The fix applied throughout this module: every cross-module
-callback registration is wrapped in a small function that lives in the
-exact same file as the callback itself -
-`dmtcp_input_register()`/`_unregister()` in `dmtcp_input.c` (wrapping
-`dmip_register_protocol()`/`_unregister_protocol()`), and
+address is handed to *another* module as a Built-in API callback
+(`dmosi_timer_create()`, ...) must be defined in the same `.c` file as the
+call that hands it over.** Calling `dmosi_timer_create()` with a callback
+defined in a *different* file compiles and links without any warning, and
+the call itself succeeds - but the very first time the timer actually
+fires and invokes the stored pointer, it jumps to an unrelocated address
+(a small, meaningless offset) and the process segfaults instantly, with no
+code of dmtcp's own ever executing. The fix applied throughout this
+module: every such cross-module callback registration is wrapped in a
+small function that lives in the exact same file as the callback itself -
 `dmtcp_output_create_rto_timer()` / `dmtcp_close_create_time_wait_timer()`
 in `dmtcp_output.c` / `dmtcp_close.c` (each wrapping its own
-`dmosi_timer_create()` call) - `dmtcp.c` and `dmtcp_conn_table.c` call
-these wrappers instead of the underlying module API directly. Calling a
-function defined in another file *without* registering it with a different
-module (e.g. `dmtcp_conn_table.c` calling into `dmtcp_output.c`'s own
-functions directly) is unaffected - the constraint is specifically about
-handing a pointer *across a module boundary* for that module to call back
-later.
+`dmosi_timer_create()` call) - `dmtcp_conn_table.c` calls these wrappers
+instead of the underlying module API directly. Calling a function defined
+in another file *without* registering it with a different module (e.g.
+`dmtcp_conn_table.c` calling into `dmtcp_output.c`'s own functions
+directly) is unaffected - the constraint is specifically about handing a
+pointer *across a module boundary* for that module to call back later.
+
+This constraint does not apply to `dmtcp_dif.c`'s implementation of
+dmip's protocol handler DIF (`dmip_protocol_receive()`/
+`_protocol_numbers()`, claiming `DMIP_PROTO_TCP`): a DIF implementation
+is a compile-time entry in this module's own `.dmod.inputs` section,
+established directly at the `dmod_dmip_dif_api_declaration(...)` call
+site - there is no separate runtime call handing a function pointer to
+another module the way `dmip_register_protocol()` (removed - see
+[dmip.md](../../dmip/docs/dmip.md#protocol-dispatch)) or
+`dmosi_timer_create()` still do. `dmtcp_dif.c` forwards straight to
+`dmtcp_handle_ip_packet()` (defined in `dmtcp_input.c`) with an ordinary
+same-module function call, and is its own translation unit purely so it
+can set `DMOD_ENABLE_REGISTRATION` without also re-registering `dmtcp`'s
+own Built-in API a second time (see `dmtcp_registrations.c`'s and
+`dmtcp_dif.c`'s own doc comments).
 
 ## Source address stability
 
@@ -316,7 +327,9 @@ callback. This is deliberately **not** terminal: the connection can still
 - `dmip` - `dmip_send()`/`_v4_get_source_address()` to transmit,
   `dmip_checksum()` for the pseudo-header checksum,
   `dmip_v4_parse_header()`/`_v6_parse_header()` to read the enclosing IP
-  header, `dmip_register_protocol()`/`_unregister_protocol()` to receive.
+  header, and dmip's protocol handler DIF
+  (`dmip_protocol_receive()`/`_protocol_numbers()`) to receive, which
+  `dmtcp_dif.c` implements.
 - `dmroute` - header-only: `dmip_addr_t`'s real definition (`dmroute_addr_t`).
 - `dmnetif` - header-only: `dmnetif_iface_t`, threaded through every
   handler/accessor.

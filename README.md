@@ -113,6 +113,7 @@ dmtcp/
 │   ├── dmtcp_conn_table.c   # Connection table, TCB lifecycle, accessors
 │   ├── dmtcp_output.c       # dmtcp_send(), retransmission timer
 │   ├── dmtcp_input.c        # Receive dispatch and state machine
+│   ├── dmtcp_dif.c          # dmip's protocol handler DIF implementation
 │   └── dmtcp_close.c        # dmtcp_close()/_abort(), TIME_WAIT timer
 ├── tests/
 │   ├── CMakeLists.txt
