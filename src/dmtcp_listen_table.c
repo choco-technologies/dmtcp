@@ -38,7 +38,7 @@ static int compare_pointer(const void* data, const void* user_data)
 
 int dmtcp_listen_table_init(void)
 {
-    g_listeners = dmlist_create(Dmod_GetCurrentAllocatorName());
+    g_listeners = dmlist_create();
     g_listen_mutex = dmosi_mutex_create(false);
     return (g_listeners != NULL && g_listen_mutex != NULL) ? 0 : -1;
 }
