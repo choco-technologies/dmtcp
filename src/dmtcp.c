@@ -84,6 +84,15 @@ dmod_dmtcp_api_declaration(1.0, int, _connect, ( const dmip_addr_t* dst, uint16_
     return 0;
 }
 
+/**
+ * @brief Module initialization - allocates the listen and connection
+ *        tables
+ *
+ * No registration with dmip needed anymore - dmtcp_dif.c's
+ * dmip_protocol_receive()/_protocol_numbers() implementations are
+ * discovered by dmip via DIF, on demand, for as long as this module stays
+ * loaded and enabled (see dmip.h's "Protocol handler DIF" section).
+ */
 int dmod_init(const Dmod_Config_t *Config)
 {
     (void)Config;
@@ -94,21 +103,12 @@ int dmod_init(const Dmod_Config_t *Config)
         return -1;
     }
 
-    int result = dmtcp_input_register();
-    if (result != 0)
-    {
-        DMOD_LOG_ERROR("dmtcp: cannot register as the TCP protocol handler (%d)\n", result);
-        return -1;
-    }
-
     DMOD_LOG_INFO("DMTCP initialized\n");
     return 0;
 }
 
 int dmod_deinit(void)
 {
-    dmtcp_input_unregister();
-
     dmtcp_conn_table_deinit();
     dmtcp_listen_table_deinit();
 

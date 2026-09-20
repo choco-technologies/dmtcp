@@ -3,12 +3,14 @@
  * @brief dmtcp_handle_ip_packet() - demux, new-connection handling, and the
  *        per-segment state-machine step for everything past the handshake
  *
- * Registered with dmip_register_protocol(DMIP_PROTO_TCP, ...) in
- * dmod_init() (see dmtcp.c). Runs inline, synchronously, on whatever
- * thread is pumping the interface a segment arrived on - see
- * dmip_protocol_handler_t in dmip.h - so everything here (including the
- * immediate ACKs/SYN-ACK/RST this file sends) happens in that same call,
- * with no queue or worker thread of its own.
+ * dmtcp_handle_ip_packet() is called from dmtcp_dif.c's
+ * dmip_protocol_receive() DIF implementation (claiming DMIP_PROTO_TCP -
+ * see dmip.h's "Protocol handler DIF" section and dmtcp_dif.c's own doc
+ * comment for why that forwarding lives in a separate translation unit).
+ * Runs inline, synchronously, on whatever thread is pumping the interface
+ * a segment arrived on, so everything here (including the immediate
+ * ACKs/SYN-ACK/RST this file sends) happens in that same call, with no
+ * queue or worker thread of its own.
  */
 #include "dmod.h"
 #include "dmtcp_internal.h"
@@ -413,14 +415,16 @@ static void dispatch(dmip_family_t family, dmnetif_iface_t iface, const dmip_add
 }
 
 /**
- * @brief dmip_protocol_handler_t registered for DMIP_PROTO_TCP - see dmod_init()
+ * @brief Called by dmtcp_dif.c's dmip_protocol_receive() DIF
+ *        implementation for every DMIP_PROTO_TCP packet
  *
  * Parses the enclosing IP header, then the TCP header, validates the
  * segment's checksum (mandatory for both families, unlike dmudp's IPv4
  * "0 means none" exception - see dmtcp.h), then dispatches. `packet` is
- * borrowed (see dmip_protocol_handler_t's own doc comment) - nothing here
- * keeps a pointer into it past this call other than what's passed inline
- * to a callback, which always returns before this function does.
+ * borrowed (see dmip_protocol_receive()'s own doc comment in dmip.h) -
+ * nothing here keeps a pointer into it past this call other than what's
+ * passed inline to a callback, which always returns before this function
+ * does.
  */
 void dmtcp_handle_ip_packet(dmip_family_t family, dmnetif_iface_t iface, const uint8_t* packet, size_t packet_len)
 {
@@ -467,27 +471,3 @@ void dmtcp_handle_ip_packet(dmip_family_t family, dmnetif_iface_t iface, const u
     }
 }
 
-/**
- * @brief Register/unregister dmtcp_handle_ip_packet() with dmip
- *
- * Deliberately kept in the same translation unit as
- * dmtcp_handle_ip_packet() itself, rather than calling
- * dmip_register_protocol() directly from dmtcp.c's dmod_init(): this
- * loader does not correctly resolve a callback whose address is taken in
- * one .c file and handed to another module's registration API from a
- * different .c file within the same module - the call silently jumps to
- * an unrelocated address (an unrelated small offset) the first time dmip
- * invokes it. Every cross-module callback registration in this module
- * (this one, and the two dmosi_timer_create() calls in dmtcp_output.c/
- * dmtcp_close.c) follows the same rule: register from the same file that
- * defines the callback.
- */
-int dmtcp_input_register(void)
-{
-    return dmip_register_protocol(DMIP_PROTO_TCP, dmtcp_handle_ip_packet);
-}
-
-void dmtcp_input_unregister(void)
-{
-    dmip_unregister_protocol(DMIP_PROTO_TCP);
-}

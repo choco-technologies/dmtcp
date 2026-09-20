@@ -285,10 +285,13 @@ bool dmtcp_conn_table_port_in_use_for_peer(uint16_t local_port, const dmip_addr_
  * that defines the corresponding dmosi_timer_callback_t), and called by
  * dmtcp_conn_table_create() to wire up a fresh TCB's timers - deliberately
  * NOT done by dmtcp_conn_table_create() calling dmosi_timer_create()
- * itself with a callback defined elsewhere: see dmtcp_input_register()'s
- * doc comment in this header for why a cross-module callback registration
- * must be issued from the same translation unit that defines the callback
- * on this loader.
+ * itself with a callback defined elsewhere: this loader does not
+ * correctly resolve a callback whose address is taken in one .c file and
+ * handed to another module's registration API from a different .c file
+ * within the same module - the call silently jumps to an unrelocated
+ * address (an unrelated small offset) the first time it's invoked. Every
+ * cross-module callback registration in this module follows the same
+ * rule: register from the same file that defines the callback.
  *
  * @return The new timer (not started), or NULL on failure
  */
@@ -386,21 +389,10 @@ void dmtcp_flush_send_buffer(struct dmtcp_conn* conn);
 /* ---- dmtcp_input.c ---- */
 
 /**
- * @brief dmip_protocol_handler_t registered for DMIP_PROTO_TCP - see
- *        dmtcp_input_register()
+ * @brief Called by dmtcp_dif.c's dmip_protocol_receive() DIF
+ *        implementation for DMIP_PROTO_TCP - see dmip.h's "Protocol
+ *        handler DIF" section and dmtcp_dif.c's own doc comment
  */
 void dmtcp_handle_ip_packet(dmip_family_t family, dmnetif_iface_t iface, const uint8_t* packet, size_t packet_len);
-
-/**
- * @brief Register/unregister dmtcp_handle_ip_packet() with dmip, called
- *        from dmod_init()/_deinit() (see dmtcp.c)
- *
- * Kept in dmtcp_input.c, the same translation unit as
- * dmtcp_handle_ip_packet() itself - see that function's doc comment for
- * why calling dmip_register_protocol() directly from a *different* file
- * than the one defining the callback breaks on this loader.
- */
-int  dmtcp_input_register(void);
-void dmtcp_input_unregister(void);
 
 #endif // DMTCP_INTERNAL_H

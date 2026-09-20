@@ -83,7 +83,7 @@ static int compare_pointer(const void* data, const void* user_data)
 
 int dmtcp_conn_table_init(void)
 {
-    g_conns = dmlist_create(Dmod_GetCurrentAllocatorName());
+    g_conns = dmlist_create();
     g_conn_mutex = dmosi_mutex_create(false);
     return (g_conns != NULL && g_conn_mutex != NULL) ? 0 : -1;
 }

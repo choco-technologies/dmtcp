@@ -50,8 +50,9 @@ set(DMOD_DMR_PATH           ${CMAKE_CURRENT_SOURCE_DIR}/dmtcp.dmr)
 # List of MAL interfaces implemented by this module (leave empty if none)
 set(DMOD_MAL_IMPLS          )
 
-# List of DIF interfaces implemented by this module (leave empty if none)
-set(DMOD_DIF_IMPLS          )
+# List of DIF interfaces implemented by this module (leave empty if none) -
+# dmtcp implements dmip's protocol handler DIF (see src/dmtcp_dif.c).
+set(DMOD_DIF_IMPLS          dmip)
 
 #
 #   dmod_add_library - create a library module
@@ -68,6 +69,7 @@ dmod_add_library(${DMOD_MODULE_NAME} ${DMOD_MODULE_VERSION}
     src/dmtcp_conn_table.c
     src/dmtcp_output.c
     src/dmtcp_input.c
+    src/dmtcp_dif.c
     src/dmtcp_close.c
 )
 
@@ -81,9 +83,11 @@ target_include_directories(${DMOD_MODULE_NAME}_if INTERFACE
 
 # dmip:    dmip_send()/_v4_get_source_address() to transmit, dmip_checksum()
 #          for the pseudo-header checksum, dmip_v4_parse_header()/
-#          _v6_parse_header() to read the enclosing IP header,
-#          dmip_register_protocol()/_unregister_protocol() to receive (see
-#          src/dmtcp.c / src/dmtcp_input.c).
+#          _v6_parse_header() to read the enclosing IP header (see
+#          src/dmtcp_input.c), and dmip's protocol handler DIF
+#          (dmip_protocol_receive()/_protocol_numbers()) to receive, which
+#          this module implements in src/dmtcp_dif.c (see DMOD_DIF_IMPLS
+#          above).
 # dmroute: header-only - dmip.h needs dmroute_addr_t (re-exported as
 #          dmip_addr_t) directly, even though dmtcp itself never calls a
 #          dmroute_* function.

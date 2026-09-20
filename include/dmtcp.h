@@ -37,13 +37,13 @@ extern "C" {
  * every connection that has at least started its handshake. See
  * dmtcp_listen()/_listen_any()/_unlisten() and dmtcp_connect() below.
  *
- * dmtcp registers dmtcp_handle_ip_packet() via
- * dmip_register_protocol(DMIP_PROTO_TCP, ...) in dmod_init() (see
- * src/dmtcp.c) - the same mechanism dmudp/dmicmp use for their own IP
- * protocol numbers. A matching segment (exact 4-tuple, or a SYN on a
- * listened port) is processed inline, synchronously, on whatever thread is
- * pumping the interface it arrived on (see dmip_protocol_handler_t in
- * dmip.h) - so a handler reacting to dmtcp_data_handler_t can call
+ * dmtcp claims DMIP_PROTO_TCP by implementing dmip's protocol handler DIF
+ * (dmip_protocol_receive()/_protocol_numbers(), see src/dmtcp_dif.c) -
+ * the same mechanism dmudp/dmicmp use for their own IP protocol numbers.
+ * A matching segment (exact 4-tuple, or a SYN on a listened port) is
+ * processed inline, synchronously, on whatever thread is pumping the
+ * interface it arrived on (see dmip.h's "Protocol handler DIF" section) -
+ * so a handler reacting to dmtcp_data_handler_t can call
  * dmtcp_send() right back without needing its own thread or queue, the
  * same reasoning dmudp/dmicmp give for their own inline delivery. The one
  * structural exception is retransmission: a segment that needs to be
@@ -278,7 +278,7 @@ typedef enum
  * completes (state SYN_RECEIVED -> ESTABLISHED) - `conn` is already fully
  * usable by the time this is called (dmtcp_send() works immediately).
  * Called inline, on whatever thread is pumping the interface the final
- * handshake ACK arrived on (see dmip_protocol_handler_t in dmip.h) - the
+ * handshake ACK arrived on (see dmip_protocol_receive in dmip.h) - the
  * same delivery context dmudp_datagram_handler_t/dmicmp's echo reply use,
  * specifically so this handler can call dmtcp_conn_set_callbacks()
  * synchronously, before returning, to hook on_data/on_closed/on_reset/
@@ -354,7 +354,7 @@ typedef void (*dmtcp_established_handler_t)( dmtcp_conn_t conn, void* user_data 
  *        `data_len` 0) the moment the peer's FIN is received
  *
  * `data`/`data_len` are borrowed, valid only for the duration of the call
- * (the same borrowing rule dmip_protocol_handler_t documents for its own
+ * (the same borrowing rule dmip_protocol_receive documents for its own
  * `packet`) - copy out anything you need to keep.
  *
  * The `data == NULL` call is the Berkeley-sockets "read() returns 0" EOF
