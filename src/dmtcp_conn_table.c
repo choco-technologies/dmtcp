@@ -121,6 +121,7 @@ struct dmtcp_conn* dmtcp_conn_table_create(void)
     }
 
     conn->rcv_wnd = DMTCP_DEFAULT_RECV_WINDOW;
+    conn->peer_mss = DMTCP_DEFAULT_PEER_MSS;
     conn->magic = DMTCP_CONN_MAGIC;
     return conn;
 }

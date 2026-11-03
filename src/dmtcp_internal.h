@@ -88,11 +88,11 @@
 /**
  * @brief Largest payload dmtcp puts in a single outbound segment
  *
- * A fixed, conservative value - not derived from the peer's real
- * advertised MSS, since TCP options (including MSS) are never parsed (see
- * docs/dmtcp.md).
+ * Advertised in SYN/SYN-ACK. Outbound segments use the smaller of this
+ * limit and the peer's MSS (536 for IPv4 when its SYN has no MSS option).
  */
 #define DMTCP_MAX_SEGMENT_LEN 1400u
+#define DMTCP_DEFAULT_PEER_MSS 536u
 
 /**
  * @brief ARP wait allowed for the first, synchronous active-open SYN
@@ -140,6 +140,7 @@ struct dmtcp_conn
     uint32_t snd_una;
     uint32_t snd_nxt;
     uint16_t snd_wnd;
+    uint16_t peer_mss;
     uint32_t iss;
 
     /* RFC 793 §3.2 receive sequence variables */

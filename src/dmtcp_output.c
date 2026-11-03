@@ -31,7 +31,8 @@ int dmtcp_send_segment(const dmip_addr_t* src, uint16_t src_port, const dmip_add
     if (dst->family != dmip_family_v4)
         return -EINVAL;
 
-    size_t seg_len = DMTCP_HEADER_LEN + payload_len;
+    size_t header_len = DMTCP_HEADER_LEN + ((flags & DMTCP_FLAG_SYN) ? 4u : 0u);
+    size_t seg_len = header_len + payload_len;
     size_t total = DMTCP_V4_PSEUDO_HEADER_LEN + seg_len;
     uint8_t* buf = Dmod_Malloc(total);
     if (buf == NULL)
@@ -42,9 +43,15 @@ int dmtcp_send_segment(const dmip_addr_t* src, uint16_t src_port, const dmip_add
     uint8_t* segment = buf + DMTCP_V4_PSEUDO_HEADER_LEN;
     dmtcp_header_t header = { .src_port = src_port, .dst_port = dst_port, .seq_num = seq, .ack_num = ack, .flags = flags, .window = window };
     dmtcp_build_header(segment, seg_len, &header);
+    if (flags & DMTCP_FLAG_SYN)
+    {
+        segment[12] = 0x60u;
+        segment[20] = 2u; segment[21] = 4u;
+        write_u16_be(segment + 22, DMTCP_MAX_SEGMENT_LEN);
+    }
     if (payload_len > 0)
     {
-        memcpy(segment + DMTCP_HEADER_LEN, payload, payload_len);
+        memcpy(segment + header_len, payload, payload_len);
     }
 
     write_u16_be(&segment[16], dmip_checksum(buf, total));
@@ -86,9 +93,9 @@ void dmtcp_flush_send_buffer(struct dmtcp_conn* conn)
         size_t queued = conn->send_buffer_len - conn->send_buffer_sent;
         size_t room = (size_t)conn->snd_wnd - outstanding;
         size_t chunk = queued < room ? queued : room;
-        if (chunk > DMTCP_MAX_SEGMENT_LEN)
+        if (chunk > conn->peer_mss)
         {
-            chunk = DMTCP_MAX_SEGMENT_LEN;
+            chunk = conn->peer_mss;
         }
 
         /* Fire-and-forget, like every other automatic segment this module sends
@@ -184,9 +191,9 @@ static void resend_data(struct dmtcp_conn* conn)
     while (offset < conn->send_buffer_sent)
     {
         size_t chunk = conn->send_buffer_sent - offset;
-        if (chunk > DMTCP_MAX_SEGMENT_LEN)
+        if (chunk > conn->peer_mss)
         {
-            chunk = DMTCP_MAX_SEGMENT_LEN;
+            chunk = conn->peer_mss;
         }
 
         dmtcp_send_segment(&conn->local_addr, conn->local_port, &conn->peer_addr, conn->peer_port,

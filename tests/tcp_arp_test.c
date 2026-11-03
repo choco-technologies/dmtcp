@@ -10,6 +10,8 @@ static struct dmtcp_conn connection;
 static uint8_t send_buffer[DMTCP_SEND_BUFFER_LEN];
 static unsigned sends, waits, timer_starts, timer_stops;
 static bool resolved;
+static size_t largest_payload, wire_size;
+static uint8_t wire_prefix[24];
 
 static void* allocate(size_t size, const char* owner) { (void)owner; return malloc(size); }
 static void release(void* ptr, bool merge) { (void)merge; free(ptr); }
@@ -22,7 +24,12 @@ static uint16_t identification(void) { return 0; }
 static uint32_t ticks(void) { return 100; }
 static int send_ip(const dmip_header_t* header, const void* data, size_t size, uint32_t timeout)
 {
-    (void)header; (void)data; (void)size;
+    (void)header;
+    wire_size = size;
+    size_t prefix = size < sizeof(wire_prefix) ? size : sizeof(wire_prefix);
+    memcpy(wire_prefix, data, prefix);
+    size_t header_len = (size_t)(((const uint8_t*)data)[12] >> 4) * 4;
+    if (size - header_len > largest_payload) largest_payload = size - header_len;
     sends++;
     if (!resolved && timeout > 0) waits++;
     return resolved ? 0 : -EHOSTUNREACH;
@@ -46,8 +53,9 @@ static void reset(void)
     connection.rcv_nxt = 200;
     connection.snd_wnd = connection.rcv_wnd = DMTCP_DEFAULT_RECV_WINDOW;
     connection.send_buffer = send_buffer;
+    connection.peer_mss = DMTCP_DEFAULT_PEER_MSS;
     sends = waits = timer_starts = timer_stops = 0;
-    resolved = false;
+    resolved = false; largest_payload = wire_size = 0;
     Dmod_MallocEx = allocate; Dmod_FreeEx = release;
     dmosi_mutex_lock = lock_mutex; dmosi_mutex_unlock = unlock_mutex;
     dmosi_timer_start = start_timer; dmosi_timer_stop = stop_timer;
@@ -93,8 +101,10 @@ static int passive_handshake_survives_arp_miss(void)
     reset();
     dmip_addr_t local = connection.local_addr, peer = connection.peer_addr;
     dmtcp_header_t header = {.seq_num = 500, .flags = DMTCP_FLAG_SYN};
-    handle_new_syn(NULL, dmip_family_v4, NULL, &local, 21, &peer, 12345, &header);
+    handle_new_syn(NULL, dmip_family_v4, NULL, &local, 21, &peer, 12345, &header, DMTCP_DEFAULT_PEER_MSS);
     CHECK(sends == 1 && waits == 0 && connection.state == dmtcp_state_syn_received);
+    CHECK(wire_size == 24 && wire_prefix[12] == 0x60 && wire_prefix[20] == 2 && wire_prefix[21] == 4);
+    CHECK((((unsigned)wire_prefix[22] << 8) | wire_prefix[23]) == DMTCP_MAX_SEGMENT_LEN);
     resolved = true; dmtcp_rto_timer_callback(&connection);
     CHECK(sends == 2 && waits == 0);
     struct segment_result result = {0};
@@ -123,10 +133,42 @@ static int fin_and_reset_never_wait_for_arp(void)
     return 0;
 }
 
+static int mss_options_and_segment_limits(void)
+{
+    reset();
+    uint8_t segment[28] = {0};
+    CHECK(parse_peer_mss(segment,20) == 536);
+    segment[20]=1; segment[21]=2; segment[22]=4; segment[23]=1; segment[24]=0;
+    CHECK(parse_peer_mss(segment,28) == 256);
+    segment[23]=0xff; segment[24]=0xff;
+    CHECK(parse_peer_mss(segment,28) == DMTCP_MAX_SEGMENT_LEN);
+    segment[23]=segment[24]=0;
+    CHECK(parse_peer_mss(segment,28) == 536);
+    segment[22]=1; /* Invalid option length cannot loop or read past the header. */
+    CHECK(parse_peer_mss(segment,28) == 536);
+    segment[22]=4;
+    CHECK(parse_peer_mss(segment,24) == 536);
+
+    connection.peer_mss = 256; connection.send_buffer_len = 1000;
+    dmtcp_flush_send_buffer(&connection);
+    CHECK(sends == 4 && largest_payload == 256 && connection.send_buffer_sent == 1000);
+    resolved = true; dmtcp_rto_timer_callback(&connection);
+    CHECK(sends == 8 && largest_payload == 256);
+    return 0;
+}
+static int active_handshake_records_peer_mss(void)
+{
+    reset(); resolved=true; connection.state=dmtcp_state_syn_sent; connection.snd_nxt=101;
+    dmtcp_header_t header={.flags=DMTCP_FLAG_SYN|DMTCP_FLAG_ACK,.seq_num=500,.ack_num=101};
+    handle_syn_sent_segment(&connection,&header,1240);
+    CHECK(connection.peer_mss==1240 && connection.state==dmtcp_state_established);
+    return 0;
+}
 int main(void)
 {
     int errors = lost_ack_is_recovered_by_peer_retry() + queued_data_survives_arp_miss()
                + passive_handshake_survives_arp_miss() + fin_and_reset_never_wait_for_arp();
-    printf("TCP ARP regression tests: %d failure(s)\n", errors);
+    errors += mss_options_and_segment_limits() + active_handshake_records_peer_mss();
+    printf("TCP ARP/MSS regression tests: %d failure(s)\n", errors);
     return errors;
 }

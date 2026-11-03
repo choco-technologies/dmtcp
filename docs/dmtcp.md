@@ -303,10 +303,11 @@ callback. This is deliberately **not** terminal: the connection can still
 - **No congestion control.** No slow start, no congestion avoidance, no
   Reno/Cubic - a fixed window only, per the "simple/fixed window" scope
   decision.
-- **No TCP options.** Inbound options (MSS, window scale, timestamps,
-  SACK-permitted) are skipped, never interpreted; outbound segments are
-  capped at a fixed, conservative `DMTCP_MAX_SEGMENT_LEN` rather than a
-  real negotiated MSS.
+- **Only the MSS TCP option is interpreted.** Window scaling, timestamps,
+  SACK and other options are skipped. SYN/SYN-ACK advertise the local MSS;
+  outbound data and retransmissions obey the peer's advertised MSS, or
+  the IPv4 default of 536 bytes when absent.
+
 - **No out-of-order reassembly buffer.** A segment that doesn't land
   exactly at `rcv_nxt` is dropped (but still duplicate-ACKed), relying on
   the peer's own retransmission timer to eventually resend it in order.
@@ -363,3 +364,13 @@ callback. This is deliberately **not** terminal: the connection can still
   the current logical head, which doesn't map cleanly onto "peek the
   already-transmitted-but-unacked prefix specifically" without an extra
   copy regardless.
+
+## Maximum segment size
+
+[RFC 9293 §3.7.1](https://www.rfc-editor.org/rfc/rfc9293.html#section-3.7.1)
+requires MSS sending/receiving and the IPv4 default of 536 bytes.
+SYN and SYN-ACK advertise a 1400-byte MSS. Outbound data and RTO retries
+respect the smaller of that limit and the MSS from the peer's SYN. If
+there is no usable MSS option, IPv4 falls back to 536 bytes. This avoids
+sending oversized segments to a peer with a smaller limit and lets peers
+send more than the 536-byte IPv4 default. Other TCP options remain skipped.
