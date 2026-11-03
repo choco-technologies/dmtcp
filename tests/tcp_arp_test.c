@@ -8,7 +8,7 @@
 #define CHECK(e) do { if (!(e)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #e); return 1; } } while (0)
 static struct dmtcp_conn connection;
 static uint8_t send_buffer[DMTCP_SEND_BUFFER_LEN];
-static unsigned sends, waits, timer_starts, timer_stops;
+static unsigned sends, waits, timer_starts, timer_stops, terminations;
 static bool resolved;
 static size_t largest_payload, wire_size;
 static uint8_t wire_prefix[24];
@@ -40,7 +40,7 @@ struct dmtcp_conn* dmtcp_conn_table_create(void) { return &connection; }
 int dmtcp_conn_table_insert(struct dmtcp_conn* conn) { (void)conn; return 0; }
 void dmtcp_conn_table_destroy(struct dmtcp_conn* conn) { (void)conn; }
 void dmtcp_conn_table_terminate(struct dmtcp_conn* conn, dmtcp_terminal_reason_t reason, int error, dmtcp_teardown_context_t context)
-{ (void)conn; (void)reason; (void)error; (void)context; }
+{ (void)conn; (void)reason; (void)error; (void)context; terminations++; }
 
 static void reset(void)
 {
@@ -54,7 +54,7 @@ static void reset(void)
     connection.snd_wnd = connection.rcv_wnd = DMTCP_DEFAULT_RECV_WINDOW;
     connection.send_buffer = send_buffer;
     connection.peer_mss = DMTCP_DEFAULT_PEER_MSS;
-    sends = waits = timer_starts = timer_stops = 0;
+    sends = waits = timer_starts = timer_stops = terminations = 0;
     resolved = false; largest_payload = wire_size = 0;
     Dmod_MallocEx = allocate; Dmod_FreeEx = release;
     dmosi_mutex_lock = lock_mutex; dmosi_mutex_unlock = unlock_mutex;
@@ -164,11 +164,27 @@ static int active_handshake_records_peer_mss(void)
     CHECK(connection.peer_mss==1240 && connection.state==dmtcp_state_established);
     return 0;
 }
+static int time_wait_ignores_late_reset(void)
+{
+    reset();
+    dmtcp_header_t header={.flags=DMTCP_FLAG_RST,.seq_num=connection.rcv_nxt};
+    connection.state=dmtcp_state_time_wait;
+    process_segment_for_conn(&connection,&header,NULL,0,536);
+    CHECK(terminations==0 && connection.state==dmtcp_state_time_wait);
+    connection.state=dmtcp_state_established;
+    header.seq_num--;
+    process_segment_for_conn(&connection,&header,NULL,0,536);
+    CHECK(terminations==0);
+    header.seq_num++;
+    process_segment_for_conn(&connection,&header,NULL,0,536);
+    CHECK(terminations==1);
+    return 0;
+}
 int main(void)
 {
     int errors = lost_ack_is_recovered_by_peer_retry() + queued_data_survives_arp_miss()
                + passive_handshake_survives_arp_miss() + fin_and_reset_never_wait_for_arp();
-    errors += mss_options_and_segment_limits() + active_handshake_records_peer_mss();
+    errors += mss_options_and_segment_limits() + active_handshake_records_peer_mss() + time_wait_ignores_late_reset();
     printf("TCP ARP/MSS regression tests: %d failure(s)\n", errors);
     return errors;
 }

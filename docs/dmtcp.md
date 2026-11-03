@@ -374,3 +374,9 @@ respect the smaller of that limit and the MSS from the peer's SYN. If
 there is no usable MSS option, IPv4 falls back to 536 bytes. This avoids
 sending oversized segments to a peer with a smaller limit and lets peers
 send more than the 536-byte IPv4 default. Other TCP options remain skipped.
+
+Late RST segments in TIME_WAIT are ignored, following the F1 remedy in
+[RFC 1337](https://www.rfc-editor.org/rfc/rfc1337.html#section-3). The
+existing bounded TIME_WAIT timer still finishes normally; an already
+completed FIN exchange is not changed to a reset by a delayed duplicate.
+Resets of active connections retain the exact-sequence validation.

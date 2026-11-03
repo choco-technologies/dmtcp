@@ -281,6 +281,13 @@ static void process_segment_for_conn(struct dmtcp_conn* conn, const dmtcp_header
 
     if ((hdr->flags & DMTCP_FLAG_RST) != 0)
     {
+        /* RFC 1337: a late reset must not assassinate TIME_WAIT after
+         * a successful FIN exchange (e.g. a duplicate ACK reaches CLOSED). */
+        if (conn->state == dmtcp_state_time_wait)
+        {
+            dmosi_mutex_unlock(conn->lock);
+            return;
+        }
         /* Only honored on an exact sequence match (stricter than bare RFC793,
          * closer to RFC 5961's hardening) - see docs/dmtcp.md. */
         bool acceptable = hdr->seq_num == conn->rcv_nxt;
