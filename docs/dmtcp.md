@@ -162,6 +162,21 @@ terminal callback: inbound bytes reach a protocol handler before it is
 told it may write again, and both land before any teardown that would
 free the TCB underneath them.
 
+## ARP misses in automatic output
+
+The RX pump also processes ARP replies. An automatic TCP send (ACK,
+SYN-ACK, data, FIN, RST, or retransmission) therefore uses a zero ARP wait:
+a miss sends the ARP request and returns to the pump immediately. The
+existing TCP retransmission path retries SYN/data/FIN after resolution;
+the peer retries data whose immediate ACK could not be sent. Queued bytes
+keep their sequence numbers and retransmission timer on a send failure.
+
+Waiting for ARP from an RX callback blocks the very consumer of the reply.
+On STM32 this caused repeated one-second IP send failures and FTP timeouts
+when the 60-second ARP cache entry expired during a large transfer. Only
+the first active-open SYN retains its existing synchronous one-second
+resolution attempt and immediate error reporting.
+
 ## Two lock contexts, one per-connection mutex
 
 Every other module in this tree (`dmip`, `dmicmp`, `dmudp`) only ever
@@ -288,10 +303,11 @@ callback. This is deliberately **not** terminal: the connection can still
 - **No congestion control.** No slow start, no congestion avoidance, no
   Reno/Cubic - a fixed window only, per the "simple/fixed window" scope
   decision.
-- **No TCP options.** Inbound options (MSS, window scale, timestamps,
-  SACK-permitted) are skipped, never interpreted; outbound segments are
-  capped at a fixed, conservative `DMTCP_MAX_SEGMENT_LEN` rather than a
-  real negotiated MSS.
+- **Only the MSS TCP option is interpreted.** Window scaling, timestamps,
+  SACK and other options are skipped. SYN/SYN-ACK advertise the local MSS;
+  outbound data and retransmissions obey the peer's advertised MSS, or
+  the IPv4 default of 536 bytes when absent.
+
 - **No out-of-order reassembly buffer.** A segment that doesn't land
   exactly at `rcv_nxt` is dropped (but still duplicate-ACKed), relying on
   the peer's own retransmission timer to eventually resend it in order.
@@ -348,3 +364,19 @@ callback. This is deliberately **not** terminal: the connection can still
   the current logical head, which doesn't map cleanly onto "peek the
   already-transmitted-but-unacked prefix specifically" without an extra
   copy regardless.
+
+## Maximum segment size
+
+[RFC 9293 §3.7.1](https://www.rfc-editor.org/rfc/rfc9293.html#section-3.7.1)
+requires MSS sending/receiving and the IPv4 default of 536 bytes.
+SYN and SYN-ACK advertise a 1400-byte MSS. Outbound data and RTO retries
+respect the smaller of that limit and the MSS from the peer's SYN. If
+there is no usable MSS option, IPv4 falls back to 536 bytes. This avoids
+sending oversized segments to a peer with a smaller limit and lets peers
+send more than the 536-byte IPv4 default. Other TCP options remain skipped.
+
+Late RST segments in TIME_WAIT are ignored, following the F1 remedy in
+[RFC 1337](https://www.rfc-editor.org/rfc/rfc1337.html#section-3). The
+existing bounded TIME_WAIT timer still finishes normally; an already
+completed FIN exchange is not changed to a reset by a delayed duplicate.
+Resets of active connections retain the exact-sequence validation.

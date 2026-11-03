@@ -34,10 +34,31 @@ struct segment_result
     bool     completed_close; /* LAST_ACK's FIN got acked - fire dmtcp_terminal_closed */
 };
 
+/* A missing MSS option means 536 bytes for IPv4, not our local maximum. */
+static uint16_t parse_peer_mss(const uint8_t* segment, size_t header_len)
+{
+    for (size_t i = DMTCP_HEADER_LEN; i < header_len;)
+    {
+        uint8_t kind = segment[i++];
+        if (kind == 0) break;
+        if (kind == 1) continue;
+        if (i >= header_len) break;
+        uint8_t len = segment[i++];
+        if (len < 2 || (size_t)(len - 2) > header_len - i) break;
+        if (kind == 2 && len == 4)
+        {
+            uint16_t mss = ((uint16_t)segment[i] << 8) | segment[i + 1];
+            if (mss != 0) return mss < DMTCP_MAX_SEGMENT_LEN ? mss : DMTCP_MAX_SEGMENT_LEN;
+        }
+        i += len - 2;
+    }
+    return DMTCP_DEFAULT_PEER_MSS;
+}
+
 static void send_immediate_ack(struct dmtcp_conn* conn)
 {
     dmtcp_send_segment(&conn->local_addr, conn->local_port, &conn->peer_addr, conn->peer_port,
-                        conn->snd_nxt, conn->rcv_nxt, DMTCP_FLAG_ACK, conn->rcv_wnd, NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                        conn->snd_nxt, conn->rcv_nxt, DMTCP_FLAG_ACK, conn->rcv_wnd, NULL, 0, DMTCP_ASYNC_ARP_TIMEOUT_MS);
 }
 
 static void discard_acked_prefix(struct dmtcp_conn* conn, uint32_t amount)
@@ -215,7 +236,7 @@ static void apply_incoming_data_and_fin(struct dmtcp_conn* conn, const dmtcp_hea
  * Simultaneous open (a bare SYN with no ACK arriving in SYN_SENT) is not
  * handled - a documented gap, see docs/dmtcp.md.
  */
-static void handle_syn_sent_segment(struct dmtcp_conn* conn, const dmtcp_header_t* hdr)
+static void handle_syn_sent_segment(struct dmtcp_conn* conn, const dmtcp_header_t* hdr, uint16_t peer_mss)
 {
     bool ack_ok = (hdr->flags & DMTCP_FLAG_ACK) != 0 && hdr->ack_num == conn->snd_nxt;
     bool has_syn = (hdr->flags & DMTCP_FLAG_SYN) != 0;
@@ -226,6 +247,7 @@ static void handle_syn_sent_segment(struct dmtcp_conn* conn, const dmtcp_header_
         return;
     }
 
+    conn->peer_mss = peer_mss;
     conn->irs = hdr->seq_num;
     conn->rcv_nxt = hdr->seq_num + 1u;
     conn->snd_una = hdr->ack_num;
@@ -248,7 +270,7 @@ static void handle_syn_sent_segment(struct dmtcp_conn* conn, const dmtcp_header_
  * @brief Drive one received segment through an already-tracked
  *        connection's state machine
  */
-static void process_segment_for_conn(struct dmtcp_conn* conn, const dmtcp_header_t* hdr, const uint8_t* payload, size_t payload_len)
+static void process_segment_for_conn(struct dmtcp_conn* conn, const dmtcp_header_t* hdr, const uint8_t* payload, size_t payload_len, uint16_t peer_mss)
 {
     dmosi_mutex_lock(conn->lock);
     if (conn->magic != DMTCP_CONN_MAGIC)
@@ -259,6 +281,13 @@ static void process_segment_for_conn(struct dmtcp_conn* conn, const dmtcp_header
 
     if ((hdr->flags & DMTCP_FLAG_RST) != 0)
     {
+        /* RFC 1337: a late reset must not assassinate TIME_WAIT after
+         * a successful FIN exchange (e.g. a duplicate ACK reaches CLOSED). */
+        if (conn->state == dmtcp_state_time_wait)
+        {
+            dmosi_mutex_unlock(conn->lock);
+            return;
+        }
         /* Only honored on an exact sequence match (stricter than bare RFC793,
          * closer to RFC 5961's hardening) - see docs/dmtcp.md. */
         bool acceptable = hdr->seq_num == conn->rcv_nxt;
@@ -272,7 +301,7 @@ static void process_segment_for_conn(struct dmtcp_conn* conn, const dmtcp_header
 
     if (conn->state == dmtcp_state_syn_sent)
     {
-        handle_syn_sent_segment(conn, hdr); /* unlocks internally */
+        handle_syn_sent_segment(conn, hdr, peer_mss); /* unlocks internally */
         return;
     }
 
@@ -319,7 +348,7 @@ static void process_segment_for_conn(struct dmtcp_conn* conn, const dmtcp_header
  */
 static void handle_new_syn(dmtcp_accept_handler_t listener, dmip_family_t family, dmnetif_iface_t iface,
                             const dmip_addr_t* local_addr, uint16_t local_port,
-                            const dmip_addr_t* peer_addr, uint16_t peer_port, const dmtcp_header_t* hdr)
+                            const dmip_addr_t* peer_addr, uint16_t peer_port, const dmtcp_header_t* hdr, uint16_t peer_mss)
 {
     if (family != dmip_family_v4)
     {
@@ -336,6 +365,7 @@ static void handle_new_syn(dmtcp_accept_handler_t listener, dmip_family_t family
     conn->peer_addr = *peer_addr;
     conn->peer_port = peer_port;
     conn->iface = iface;
+    conn->peer_mss = peer_mss;
     conn->irs = hdr->seq_num;
     conn->rcv_nxt = hdr->seq_num + 1u;
     conn->iss = dmosi_get_tick_count();
@@ -353,7 +383,7 @@ static void handle_new_syn(dmtcp_accept_handler_t listener, dmip_family_t family
     dmosi_mutex_lock(conn->lock);
     dmtcp_send_segment(&conn->local_addr, conn->local_port, &conn->peer_addr, conn->peer_port,
                         conn->iss, conn->rcv_nxt, (uint8_t)(DMTCP_FLAG_SYN | DMTCP_FLAG_ACK), conn->rcv_wnd,
-                        NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                        NULL, 0, DMTCP_ASYNC_ARP_TIMEOUT_MS);
     dmtcp_arm_rto(conn);
     dmosi_mutex_unlock(conn->lock);
 }
@@ -372,13 +402,13 @@ static void send_rst_for_unmatched(dmip_family_t family, const dmip_addr_t* loca
 
     if ((hdr->flags & DMTCP_FLAG_ACK) != 0)
     {
-        dmtcp_send_segment(local_addr, local_port, peer_addr, peer_port, hdr->ack_num, 0, DMTCP_FLAG_RST, 0, NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+        dmtcp_send_segment(local_addr, local_port, peer_addr, peer_port, hdr->ack_num, 0, DMTCP_FLAG_RST, 0, NULL, 0, DMTCP_ASYNC_ARP_TIMEOUT_MS);
     }
     else if ((hdr->flags & DMTCP_FLAG_SYN) != 0)
     {
         uint32_t seg_len = (uint32_t)payload_len + 1u; /* the SYN itself consumes one sequence number */
         dmtcp_send_segment(local_addr, local_port, peer_addr, peer_port, 0, hdr->seq_num + seg_len,
-                            (uint8_t)(DMTCP_FLAG_RST | DMTCP_FLAG_ACK), 0, NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                            (uint8_t)(DMTCP_FLAG_RST | DMTCP_FLAG_ACK), 0, NULL, 0, DMTCP_ASYNC_ARP_TIMEOUT_MS);
     }
     /* else: a bare data/FIN segment, no SYN/ACK, matching nothing - dropped, not RST'd
      * (documented gap in RFC793 §3.4's full off-ACK reply table, see docs/dmtcp.md) */
@@ -391,12 +421,12 @@ static void send_rst_for_unmatched(dmip_family_t family, const dmip_addr_t* loca
  *        RFC 793 §3.4 - see send_rst_for_unmatched())
  */
 static void dispatch(dmip_family_t family, dmnetif_iface_t iface, const dmip_addr_t* local_addr, const dmip_addr_t* peer_addr,
-                      const dmtcp_header_t* hdr, const uint8_t* payload, size_t payload_len)
+                      const dmtcp_header_t* hdr, const uint8_t* payload, size_t payload_len, uint16_t peer_mss)
 {
     struct dmtcp_conn* conn = dmtcp_conn_table_find(local_addr, hdr->dst_port, peer_addr, hdr->src_port);
     if (conn != NULL)
     {
-        process_segment_for_conn(conn, hdr, payload, payload_len);
+        process_segment_for_conn(conn, hdr, payload, payload_len, peer_mss);
         return;
     }
 
@@ -407,7 +437,7 @@ static void dispatch(dmip_family_t family, dmnetif_iface_t iface, const dmip_add
     dmtcp_accept_handler_t listener = is_pure_syn ? dmtcp_listen_table_find(hdr->dst_port) : NULL;
     if (listener != NULL)
     {
-        handle_new_syn(listener, family, iface, local_addr, hdr->dst_port, peer_addr, hdr->src_port, hdr);
+        handle_new_syn(listener, family, iface, local_addr, hdr->dst_port, peer_addr, hdr->src_port, hdr, peer_mss);
         return;
     }
 
@@ -447,7 +477,7 @@ void dmtcp_handle_ip_packet(dmip_family_t family, dmnetif_iface_t iface, const u
         if (!dmtcp_v4_checksum_valid(&ip_header.src, &ip_header.dst, segment, segment_len))
             return;
 
-        dispatch(dmip_family_v4, iface, &ip_header.dst, &ip_header.src, &hdr, segment + tcp_header_len, segment_len - tcp_header_len);
+        dispatch(dmip_family_v4, iface, &ip_header.dst, &ip_header.src, &hdr, segment + tcp_header_len, segment_len - tcp_header_len, parse_peer_mss(segment, tcp_header_len));
     }
     else
     {
@@ -467,7 +497,7 @@ void dmtcp_handle_ip_packet(dmip_family_t family, dmnetif_iface_t iface, const u
         if (!dmtcp_v6_checksum_valid(&ip_header.src, &ip_header.dst, segment, segment_len))
             return;
 
-        dispatch(dmip_family_v6, iface, &ip_header.dst, &ip_header.src, &hdr, segment + tcp_header_len, segment_len - tcp_header_len);
+        dispatch(dmip_family_v6, iface, &ip_header.dst, &ip_header.src, &hdr, segment + tcp_header_len, segment_len - tcp_header_len, parse_peer_mss(segment, tcp_header_len));
     }
 }
 

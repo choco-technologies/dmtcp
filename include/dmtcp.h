@@ -21,8 +21,8 @@ extern "C" {
  * fixed-size sliding window and a retransmission timer, graceful close
  * (FIN/ACK both directions), and RST generation/handling. Deliberately out
  * of scope: congestion control (no slow start/congestion avoidance - a
- * fixed window only), TCP options (no MSS negotiation/SACK/window
- * scaling/timestamps - inbound options are skipped, never interpreted),
+ * fixed window only), TCP options other than MSS (no SACK/window
+ * scaling/timestamps - other inbound options are skipped),
  * and IPv6 send (the same missing-NDP gap dmip/dmicmp/dmudp already live
  * with - dmtcp can parse/checksum-validate an inbound IPv6 segment but
  * cannot complete a handshake over one). See docs/dmtcp.md for the full

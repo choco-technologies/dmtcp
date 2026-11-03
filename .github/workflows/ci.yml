@@ -35,6 +35,9 @@ jobs:
           test -f build/dmf/test_dmtcp.dmf
           echo "Module files present"
 
+      - name: Run ARP miss regression
+        run: ctest --test-dir build -R "^tcp_arp$" --output-on-failure
+
       - name: Run tests with dmod_loader
         run: |
           export DMOD_DMF_DIR=$(pwd)/build/dmf
