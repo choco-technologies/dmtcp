@@ -37,7 +37,7 @@ struct segment_result
 static void send_immediate_ack(struct dmtcp_conn* conn)
 {
     dmtcp_send_segment(&conn->local_addr, conn->local_port, &conn->peer_addr, conn->peer_port,
-                        conn->snd_nxt, conn->rcv_nxt, DMTCP_FLAG_ACK, conn->rcv_wnd, NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                        conn->snd_nxt, conn->rcv_nxt, DMTCP_FLAG_ACK, conn->rcv_wnd, NULL, 0, DMTCP_ASYNC_ARP_TIMEOUT_MS);
 }
 
 static void discard_acked_prefix(struct dmtcp_conn* conn, uint32_t amount)
@@ -353,7 +353,7 @@ static void handle_new_syn(dmtcp_accept_handler_t listener, dmip_family_t family
     dmosi_mutex_lock(conn->lock);
     dmtcp_send_segment(&conn->local_addr, conn->local_port, &conn->peer_addr, conn->peer_port,
                         conn->iss, conn->rcv_nxt, (uint8_t)(DMTCP_FLAG_SYN | DMTCP_FLAG_ACK), conn->rcv_wnd,
-                        NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                        NULL, 0, DMTCP_ASYNC_ARP_TIMEOUT_MS);
     dmtcp_arm_rto(conn);
     dmosi_mutex_unlock(conn->lock);
 }
@@ -372,13 +372,13 @@ static void send_rst_for_unmatched(dmip_family_t family, const dmip_addr_t* loca
 
     if ((hdr->flags & DMTCP_FLAG_ACK) != 0)
     {
-        dmtcp_send_segment(local_addr, local_port, peer_addr, peer_port, hdr->ack_num, 0, DMTCP_FLAG_RST, 0, NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+        dmtcp_send_segment(local_addr, local_port, peer_addr, peer_port, hdr->ack_num, 0, DMTCP_FLAG_RST, 0, NULL, 0, DMTCP_ASYNC_ARP_TIMEOUT_MS);
     }
     else if ((hdr->flags & DMTCP_FLAG_SYN) != 0)
     {
         uint32_t seg_len = (uint32_t)payload_len + 1u; /* the SYN itself consumes one sequence number */
         dmtcp_send_segment(local_addr, local_port, peer_addr, peer_port, 0, hdr->seq_num + seg_len,
-                            (uint8_t)(DMTCP_FLAG_RST | DMTCP_FLAG_ACK), 0, NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                            (uint8_t)(DMTCP_FLAG_RST | DMTCP_FLAG_ACK), 0, NULL, 0, DMTCP_ASYNC_ARP_TIMEOUT_MS);
     }
     /* else: a bare data/FIN segment, no SYN/ACK, matching nothing - dropped, not RST'd
      * (documented gap in RFC793 §3.4's full off-ACK reply table, see docs/dmtcp.md) */

@@ -62,7 +62,7 @@ dmod_dmtcp_api_declaration(1.0, int, _connect, ( const dmip_addr_t* dst, uint16_
 
     dmosi_mutex_lock(conn->lock);
     result = dmtcp_send_segment(&conn->local_addr, conn->local_port, &conn->peer_addr, conn->peer_port,
-                                 conn->iss, 0, DMTCP_FLAG_SYN, conn->rcv_wnd, NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                                 conn->iss, 0, DMTCP_FLAG_SYN, conn->rcv_wnd, NULL, 0, DMTCP_CONNECT_ARP_TIMEOUT_MS);
     if (result == 0)
     {
         dmtcp_arm_rto(conn);

@@ -35,7 +35,7 @@ dmod_dmtcp_api_declaration(1.0, int, _close, ( dmtcp_conn_t conn ))
 
     int result = dmtcp_send_segment(&conn->local_addr, conn->local_port, &conn->peer_addr, conn->peer_port,
                                      conn->snd_nxt, conn->rcv_nxt, (uint8_t)(DMTCP_FLAG_FIN | DMTCP_FLAG_ACK), conn->rcv_wnd,
-                                     NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                                     NULL, 0, DMTCP_ASYNC_ARP_TIMEOUT_MS);
     conn->snd_nxt += 1u; /* the FIN itself consumes one sequence number */
     dmtcp_arm_rto(conn);
 
@@ -50,7 +50,7 @@ dmod_dmtcp_api_declaration(1.0, int, _abort, ( dmtcp_conn_t conn ))
 
     dmosi_mutex_lock(conn->lock);
     dmtcp_send_segment(&conn->local_addr, conn->local_port, &conn->peer_addr, conn->peer_port,
-                        conn->snd_nxt, conn->rcv_nxt, DMTCP_FLAG_RST, 0, NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                        conn->snd_nxt, conn->rcv_nxt, DMTCP_FLAG_RST, 0, NULL, 0, DMTCP_ASYNC_ARP_TIMEOUT_MS);
     dmosi_mutex_unlock(conn->lock);
 
     dmtcp_conn_table_terminate(conn, dmtcp_terminal_reset, 0, dmtcp_teardown_context_normal);

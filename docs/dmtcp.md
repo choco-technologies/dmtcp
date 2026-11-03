@@ -162,6 +162,21 @@ terminal callback: inbound bytes reach a protocol handler before it is
 told it may write again, and both land before any teardown that would
 free the TCB underneath them.
 
+## ARP misses in automatic output
+
+The RX pump also processes ARP replies. An automatic TCP send (ACK,
+SYN-ACK, data, FIN, RST, or retransmission) therefore uses a zero ARP wait:
+a miss sends the ARP request and returns to the pump immediately. The
+existing TCP retransmission path retries SYN/data/FIN after resolution;
+the peer retries data whose immediate ACK could not be sent. Queued bytes
+keep their sequence numbers and retransmission timer on a send failure.
+
+Waiting for ARP from an RX callback blocks the very consumer of the reply.
+On STM32 this caused repeated one-second IP send failures and FTP timeouts
+when the 60-second ARP cache entry expired during a large transfer. Only
+the first active-open SYN retains its existing synchronous one-second
+resolution attempt and immediate error reporting.
+
 ## Two lock contexts, one per-connection mutex
 
 Every other module in this tree (`dmip`, `dmicmp`, `dmudp`) only ever

@@ -95,10 +95,19 @@
 #define DMTCP_MAX_SEGMENT_LEN 1400u
 
 /**
- * @brief Default ARP-resolution timeout for a segment dmtcp sends on its
- *        own initiative (a RTO retransmission, a RST, ...)
+ * @brief ARP wait allowed for the first, synchronous active-open SYN
  */
-#define DMTCP_DEFAULT_ARP_TIMEOUT_MS 1000u
+#define DMTCP_CONNECT_ARP_TIMEOUT_MS 1000u
+
+/**
+ * @brief Automatic TCP output must never wait for ARP in the RX pump.
+ *
+ * A miss still sends an ARP request. Return to the pump so it can receive
+ * the reply; TCP retransmission recovers data/SYN/FIN and the peer retries
+ * data whose immediate ACK was lost. Waiting here prevents that same pump
+ * from processing the ARP reply after a cache entry expires.
+ */
+#define DMTCP_ASYNC_ARP_TIMEOUT_MS 0u
 
 #define DMTCP_V4_PSEUDO_HEADER_LEN 12u
 #define DMTCP_V6_PSEUDO_HEADER_LEN 40u

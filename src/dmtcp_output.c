@@ -100,7 +100,7 @@ void dmtcp_flush_send_buffer(struct dmtcp_conn* conn)
          * timer would leave the connection with data queued but no retry in flight. */
         dmtcp_send_segment(&conn->local_addr, conn->local_port, &conn->peer_addr, conn->peer_port,
                             conn->snd_nxt, conn->rcv_nxt, DMTCP_FLAG_ACK, conn->rcv_wnd,
-                            conn->send_buffer + conn->send_buffer_sent, chunk, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                            conn->send_buffer + conn->send_buffer_sent, chunk, DMTCP_ASYNC_ARP_TIMEOUT_MS);
 
         conn->snd_nxt += (uint32_t)chunk;
         conn->send_buffer_sent += chunk;
@@ -175,7 +175,7 @@ static void resend_syn(struct dmtcp_conn* conn)
         ack = conn->rcv_nxt;
     }
     dmtcp_send_segment(&conn->local_addr, conn->local_port, &conn->peer_addr, conn->peer_port,
-                        conn->iss, ack, flags, conn->rcv_wnd, NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                        conn->iss, ack, flags, conn->rcv_wnd, NULL, 0, DMTCP_ASYNC_ARP_TIMEOUT_MS);
 }
 
 static void resend_data(struct dmtcp_conn* conn)
@@ -191,7 +191,7 @@ static void resend_data(struct dmtcp_conn* conn)
 
         dmtcp_send_segment(&conn->local_addr, conn->local_port, &conn->peer_addr, conn->peer_port,
                             conn->snd_una + (uint32_t)offset, conn->rcv_nxt, DMTCP_FLAG_ACK, conn->rcv_wnd,
-                            conn->send_buffer + offset, chunk, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                            conn->send_buffer + offset, chunk, DMTCP_ASYNC_ARP_TIMEOUT_MS);
         offset += chunk;
     }
 }
@@ -200,7 +200,7 @@ static void resend_fin(struct dmtcp_conn* conn)
 {
     dmtcp_send_segment(&conn->local_addr, conn->local_port, &conn->peer_addr, conn->peer_port,
                         conn->snd_nxt - 1u, conn->rcv_nxt, (uint8_t)(DMTCP_FLAG_FIN | DMTCP_FLAG_ACK), conn->rcv_wnd,
-                        NULL, 0, DMTCP_DEFAULT_ARP_TIMEOUT_MS);
+                        NULL, 0, DMTCP_ASYNC_ARP_TIMEOUT_MS);
 }
 
 /**
